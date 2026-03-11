@@ -48,6 +48,7 @@ class Retriever(BaseRetriever):
     use_web: bool
     reranker_model: Optional[PreTrainedModel]
     reranker_tokenizer: Optional[PreTrainedTokenizerBase]
+    reranker_device: str = "cpu"
 
     _search_types = Literal["dense", "sparse", "hybrid"]
 
@@ -83,8 +84,8 @@ class Retriever(BaseRetriever):
         logger.info(f"Loaded sparse model: {sparse_model_config}")
 
         # Load reranker from Hugging Face
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         if config.reranker_model_name:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
             reranker_tokenizer = AutoTokenizer.from_pretrained(
                 config.reranker_model_name
             )
@@ -92,7 +93,7 @@ class Retriever(BaseRetriever):
                 config.reranker_model_name
             ).to(device)
 
-            logger.info(f"Loaded reranker model: {config.reranker_model_name}")
+            logger.info(f"Loaded reranker model: {config.reranker_model_name} on {device}")
         else:
             reranker_model = reranker_tokenizer = None
 
@@ -105,6 +106,7 @@ class Retriever(BaseRetriever):
             use_web=config.use_web,
             reranker_model=reranker_model,
             reranker_tokenizer=reranker_tokenizer,
+            reranker_device=device,
         )
 
     def compute_query_embeddings(
@@ -284,7 +286,7 @@ class Retriever(BaseRetriever):
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-            ).to("cuda")
+            ).to(self.reranker_device)
 
             # Forward pass on the batch
             with torch.no_grad():
