@@ -190,17 +190,25 @@ class Indexer:
             )
 
             # Insert the batch
-            data = [
-                {
-                    "id": sample.id,
-                    "document_id": sample.document_id,
-                    "text": sample.text,
-                    "dense_embedding": d,
-                    "sparse_embedding": s.reshape(1, -1),
-                    **sample.metadata,
-                }
-                for sample, d, s in zip(batch, dense_embeddings, sparse_embeddings)
-            ]
+            data = []
+            for sample, d, s in zip(batch, dense_embeddings, sparse_embeddings):
+                # Handle sparse embeddings: newer versions return dicts (Milvus native format),
+                # older versions return scipy sparse arrays that need reshaping
+                if isinstance(s, dict):
+                    sparse_val = s  # Already in Milvus-compatible format
+                else:
+                    sparse_val = s.reshape(1, -1)
+
+                data.append(
+                    {
+                        "id": sample.id,
+                        "document_id": sample.document_id,
+                        "text": sample.text,
+                        "dense_embedding": d,
+                        "sparse_embedding": sparse_val,
+                        **sample.metadata,
+                    }
+                )
 
             batch_inserted = self.client.insert(
                 data=data,
