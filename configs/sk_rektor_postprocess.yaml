@@ -1,0 +1,8 @@
+pp_modules:
+  - type: chunker
+    args:
+      chunking_strategy: sentence
+
+output:
+  output_path: C:/Users/aryan/Documents/kuliah/skripsi/mmore/outputs/postprocess/merged/results.jsonl
+  save_each_step: True

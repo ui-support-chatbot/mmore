@@ -1,0 +1,22 @@
+data_path: C:/Users/aryan/Documents/kuliah/skripsi/mmore/SK_Rektor_PSA/
+google_drive_ids: []
+dispatcher_config:
+  output_path: C:/Users/aryan/Documents/kuliah/skripsi/mmore/outputs/process/
+  use_fast_processors: true
+  distributed: false
+  dashboard_backend_url: null
+  extract_images: true
+  scheduler_file: null
+  process_batch_sizes:
+    - PDFProcessor: 4
+  processor_config:
+    PDFProcessor:
+      - PDFTEXT_CPU_WORKERS: 1
+      - DETECTOR_BATCH_SIZE: 1
+      - DETECTOR_POSTPROCESSING_CPU_WORKERS: 1
+      - RECOGNITION_BATCH_SIZE: 1
+      - OCR_PARALLEL_WORKERS: 1
+      - TEXIFY_BATCH_SIZE: 1
+      - LAYOUT_BATCH_SIZE: 1
+      - ORDER_BATCH_SIZE: 1
+      - TABLE_REC_BATCH_SIZE: 1
