@@ -92,6 +92,9 @@ class RAGPipeline:
             """Validate the output of the LLM and keep only the actual answer of the assistant"""
             res_dict = MMOREOutput.model_validate(x).model_dump()
             res_dict["answer"] = res_dict["answer"].split("<|im_start|>assistant\n")[-1]
+            # Preserve context string from the chain
+            if "context" in x:
+                res_dict["context"] = x["context"]
 
             return res_dict
 
