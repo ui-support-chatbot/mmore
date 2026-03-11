@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  # ── Ollama (LLM serving) ──
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]    # GPU 0 for LLM
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ── MMORE RAG API ──
+  mmore-rag:
+    build:
+      context: .
+      args:
+        PLATFORM: gpu
+    container_name: mmore-rag
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./configs:/app/configs
+      - ./mmore_data:/app/mmore_data
+    environment:
+      - OPENAI_API_KEY=dummy
+      - CUDA_VISIBLE_DEVICES=1      # GPU 1 for MMORE (SPLADE, reranker)
+    command: ["python", "-m", "mmore", "rag", "--config-file", "/app/configs/sk_rektor_rag_docker.yaml"]
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]    # GPU 1 for embedding/reranker
+              capabilities: [gpu]
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  # ── MMORE Index API (optional — for uploading new docs) ──
+  mmore-index-api:
+    build:
+      context: .
+      args:
+        PLATFORM: gpu
+    container_name: mmore-index-api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./configs:/app/configs
+      - ./mmore_data:/app/mmore_data
+    command: ["python", "-m", "mmore", "index-api", "--config-file", "/app/configs/sk_rektor_index_docker.yaml", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      - ollama
+    profiles: ["full"]    # Only starts with: docker compose --profile full up
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

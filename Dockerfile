@@ -1,5 +1,4 @@
 ARG PLATFORM
-ARG UV_ARGUMENTS=""
 
 FROM nvidia/cuda:12.2.2-base-ubuntu22.04 AS gpu
 ARG PLATFORM
@@ -23,7 +22,7 @@ RUN apt-get update && \
       libxi6 libxrandr2 libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxrender1 \
       libasound2 libatk1.0-0 libgtk-3-0 libreoffice libjpeg-dev libpango-1.0-0 \
       libpangoft2-1.0-0 weasyprint && \
-    ln -fs /usr/share/zoneinfo/Europe/Zurich /etc/localtime && \
+    ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime && \
     dpkg-reconfigure --frontend noninteractive tzdata && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -42,9 +41,12 @@ RUN python3 -m venv .venv \
 COPY pyproject.toml poetry.lock* /app/
 COPY --chown=mmoreuser:mmoreuser . /app
 
-RUN .venv/bin/uv pip install --no-cache ${UV_ARGUMENTS} -e .
+# Install MMORE + extra dependencies + bug fix reinstall
+RUN .venv/bin/uv pip install --no-cache ${UV_ARGUMENTS} -e . && \
+    .venv/bin/uv pip install --no-cache nltk tiktoken
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV DASK_DISTRIBUTED__WORKER__DAEMON=False
 
-ENTRYPOINT ["/bin/bash"]
+# Default entrypoint for running mmore commands
+ENTRYPOINT ["python", "-m", "mmore"]
