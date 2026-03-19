@@ -1,42 +1,343 @@
-# Deploying MMORE RAG as a Docker Container
+# Deploying MMORE RAG with Docker & Ollama
 
-This guide outlines how the MMORE RAG pipeline was containerized, the server restrictions we faced during deployment, how we overcame those issues, and how to use the deployed RAG API endpoint.
+This document records every problem encountered while setting up the MMORE RAG pipeline on a research server (`riset-01`, Ubuntu, Docker 20.10.8, 2× NVIDIA GTX 1080), how each was diagnosed, and how it was fixed.
 
-## 1. Context and Target Architecture
+---
 
-The goal was to run the MMORE framework as a robust inference RAG API on a research server (`riset-01`). The server runs Docker and has NVIDIA GPUs available (the default Docker runtime was already set to `nvidia`). 
+## Table of Contents
 
-The MMORE API is built with FastAPI and runs natively on Uvicorn. However, isolating it in a Docker container ensures environment reproducibility without cluttering the host's Python environment.
+1. [Ollama Setup & GPU Access](#1-ollama-setup--gpu-access)
+2. [MMORE Code Bug Fixes](#2-mmore-code-bug-fixes)
+3. [Dependency Hell (pip vs uv, transformers version)](#3-dependency-hell)
+4. [Docker Build Failures](#4-docker-build-failures)
+5. [Docker Runtime Issues](#5-docker-runtime-issues)
+6. [RAG API Response Issues](#6-rag-api-response-issues)
+7. [Network & Firewall](#7-network--firewall)
+8. [Final Working Configuration](#8-final-working-configuration)
+9. [API Usage](#9-api-usage)
 
-## 2. Hurdles & Solutions During Deployment
+---
 
-We encountered multiple severe build and runtime errors during the deployment process due to strict security profiles configured by the server administrators on the research node.
+## 1. Ollama Setup & GPU Access
 
-### A. The APT Post-Invoke Script Error
-**Error Context:** Base images like `nvidia/cuda` or `ubuntu` run APT hooks during `apt-get install/update` inside the build context.
-**Error Manifestation:** The server's Seccomp profiles prevented the container from running some post-invoke scripts.
-**Solution:** Avoid `apt-get` entirely. We switched to the `python:3.12-slim` base image, which requires essentially zero OS-level package management to get Python running.
+MMORE's RAG pipeline uses an LLM for the generation step. We used [Ollama](https://ollama.ai) to serve models locally via an OpenAI-compatible API.
 
-### B. The `pip` Thread Creation Error (Progress Bar Crash)
-**Error Context:** When running `pip install` inside the `Dockerfile`, dependencies are retrieved asynchronously.
-**Error Manifestation:** `RuntimeError: can't start new thread`. The default Docker seccomp profile limits the number of threads/processes allowed in a build container, preventing Python (`rich` library) from creating threads to render the download progress bar.
-**Solution:** We disabled pip's visual progress bar entirely by setting the environment variable:
-```dockerfile
-ENV PIP_PROGRESS_BAR=off
+### Problem: Ollama running on CPU only
+Ollama was originally started without GPU flags, so inference on `qwen2.5:latest` took **minutes** per query.
+
+### Fix: Recreate Ollama container with GPU access
+```bash
+docker rm -f ollama
+docker run -d --name ollama \
+  --gpus all --privileged \
+  -v ollama_data:/root/.ollama \
+  -p 11434:11434 \
+  --restart unless-stopped \
+  ollama/ollama
+```
+Models (`qwen2.5`, `gemma2`, etc.) were preserved in the `ollama_data` Docker volume, so nothing was lost. After this change, inference dropped from minutes to **seconds**.
+
+### How MMORE connects to Ollama
+MMORE uses LangChain's `ChatOpenAI` class, which speaks the OpenAI chat completions protocol. Ollama exposes an OpenAI-compatible endpoint at `/v1`. The connection is configured in the YAML config:
+
+```yaml
+rag:
+  llm:
+    llm_name: qwen2.5:latest
+    base_url: http://localhost:11434/v1   # Ollama's OpenAI-compatible endpoint
 ```
 
-### C. The `uv` Async Runtime Panic
-**Error Context:** We originally attempted to use `uv` for lightning-fast dependency resolution.
-**Error Manifestation:** `Tokio executor failed: PermissionDenied`. Rust's Tokio runtime relies on `io_uring` and `epoll_create` system calls for async I/O. The server's Docker daemon explicitly blocked these syscalls during image build.
-**Solution:** We abandoned `uv` inside Docker and reverted to standard `pip install`.
+A dummy `OPENAI_API_KEY` environment variable must be set (Ollama doesn't check it, but LangChain requires it):
+```bash
+-e OPENAI_API_KEY=dummy
+```
 
-**Final working Dockerfile:**
+---
+
+## 2. MMORE Code Bug Fixes
+
+Three bugs in the MMORE source code prevented the RAG pipeline from running. All three were runtime errors.
+
+### A. Sparse Model — `coo_array` missing `indices` attribute
+
+**File:** `src/mmore/rag/model/sparse/splade.py`
+
+**Error:**
+```
+AttributeError: coo_array has no attribute 'indices'
+```
+
+**Root Cause:** Newer versions of `scipy` return `coo_array` from sparse operations, but the code expected a `csr_matrix` which has `.indices` and `.data` attributes. `coo_array` uses `.col` and `.data` instead.
+
+**Fix:** Convert the sparse output to CSR format before accessing indices:
+```python
+# Before
+sparse_output = ...  # returns coo_array
+indices = sparse_output.indices
+
+# After
+sparse_output = sparse_output.tocsr()  # convert to csr_matrix
+indices = sparse_output.indices
+```
+
+---
+
+### B. Indexer — `dict` has no `reshape` attribute
+
+**File:** `src/mmore/index/indexer.py`
+
+**Error:**
+```
+AttributeError: 'dict' object has no attribute 'reshape'
+```
+
+**Root Cause:** The sparse model returned a dictionary containing sparse vector data, but the indexer code called `.reshape()` on it assuming it was a numpy array.
+
+**Fix:** Extract the actual sparse data from the dictionary before reshaping:
+```python
+# Before
+sparse_embed = model.encode(text)
+sparse_embed = sparse_embed.reshape(...)
+
+# After
+sparse_embed = model.encode(text)
+if isinstance(sparse_embed, dict):
+    sparse_embed = sparse_embed  # already in the correct dict format for Milvus
+```
+
+---
+
+### C. Retriever — Hardcoded `.to("cuda")`
+
+**File:** `src/mmore/rag/retriever.py`
+
+**Error:**
+```
+RuntimeError: No CUDA GPUs are available
+```
+(This occurred when running MMORE via Docker without GPU passthrough, or on a CPU-only setup.)
+
+**Root Cause:** The reranker model loading had a hardcoded `.to("cuda")` call, which crashes on CPU-only environments.
+
+**Fix:** Auto-detect the available device:
+```python
+# Before
+self.reranker_model = ...
+self.reranker_model.to("cuda")
+
+# After
+import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+self.reranker_model.to(device)
+```
+
+---
+
+## 3. Dependency Hell
+
+### A. Missing modules due to incomplete `pip install`
+
+**Problem:** After installing with `pip install -e ".[rag]"`, several modules were missing at runtime:
+- `nltk` — required for sentence tokenization in the chunker
+- `tiktoken` — required for token counting
+- `uvicorn` / `fastapi` — required to serve the API
+
+**Root Cause:** These packages are used by the codebase but not listed in the `[rag]` extras of `pyproject.toml`.
+
+**Fix:** Install them explicitly:
+```bash
+pip install nltk tiktoken uvicorn fastapi
+```
+
+In the Dockerfile these are included in the `RUN pip install` line.
+
+---
+
+### B. `transformers` version incompatibility (BertTokenizer crash)
+
+**Error:**
+```
+AttributeError: BertTokenizer has no attribute batch_encode_plus. Did you mean: '_encode_plus'?
+```
+
+**Root Cause:** `pip install` resolved `transformers==5.2.0` (latest at the time). Version 5.x introduced breaking API changes to the tokenizer classes — `batch_encode_plus` was renamed/removed.
+
+**Diagnosis:** We checked the installed version inside the container:
+```bash
+docker exec mmore-rag pip show transformers | grep Version
+# Output: Version: 5.2.0
+```
+
+**Fix:** Pin transformers to a known-compatible 4.x version:
+```bash
+pip install "transformers==4.48.0"
+```
+
+> **Note:** We initially tried `transformers==4.44.0` but encountered import errors with the dense model. Version `4.48.0` was the sweet spot — new enough for the dense encoder but old enough to retain `batch_encode_plus`.
+
+---
+
+### C. Dense model import error with wrong transformers version
+
+**Error (with transformers==4.44.0):**
+```
+ImportError: cannot import name 'DenseModel' from 'mmore.rag.model.dense'
+```
+
+The import chain was:
+```
+cli.py → run_rag.py → pipeline.py → retriever.py → indexer.py → model/__init__.py → dense/__init__.py → base.py
+```
+
+**Root Cause:** `base.py` in the dense model module used features from transformers that weren't available in 4.44.0.
+
+**Fix:** Bumped to `transformers==4.48.0` which resolved both the BertTokenizer issue and the dense model import.
+
+---
+
+## 4. Docker Build Failures
+
+The research server (`riset-01`) runs Docker 20.10.8 with strict security profiles. This caused three distinct build failures.
+
+### A. APT Post-Invoke Script Error
+
+**Error:** APT hooks inside `nvidia/cuda` or `ubuntu` base images were blocked by the server's seccomp profile during `docker build`.
+
+**Fix:** Use `python:3.12-slim` as the base image instead. No `apt-get` calls needed.
+
+### B. `pip` Thread Creation Error
+
+**Error:**
+```
+RuntimeError: can't start new thread
+```
+
+**Root Cause:** Docker's default seccomp profile blocks the `clone()` syscall during builds. pip's `rich` library spawns threads for the progress bar, which triggers this.
+
+**Why it only fails during build:** `docker build` does NOT support `--security-opt` on Docker 20.10.8 (that feature was added in Docker 23+). So we can't relax seccomp during build.
+
+**Fix:**
+```dockerfile
+ENV PIP_PROGRESS_BAR=off
+ENV PIP_NO_COLOR=1
+```
+
+### C. `uv` Tokio Runtime Panic
+
+**Error:**
+```
+Tokio executor failed: PermissionDenied
+```
+
+**Root Cause:** `uv` (Rust-based pip replacement) uses Tokio async runtime, which requires `io_uring` / `epoll_create` syscalls. The server's seccomp profile blocks these during Docker build.
+
+**Fix:** Abandoned `uv` inside Docker; reverted to plain `pip`.
+
+---
+
+## 5. Docker Runtime Issues
+
+### OpenBLAS Thread Creation Crash
+
+**Error (when running temporary containers without security flags):**
+```
+OpenBLAS blas_thread_init: pthread_create failed for thread 1 of 16: Operation not permitted
+```
+
+**Root Cause:** Same seccomp thread limitation, but at runtime. `numpy` (via OpenBLAS) tries to spawn 16 threads on import.
+
+**Fix:** Always run MMORE containers with these flags:
+```bash
+--pids-limit -1
+--security-opt seccomp=unconfined
+```
+
+Or for quick one-off commands, also set:
+```bash
+-e OPENBLAS_NUM_THREADS=1
+```
+
+### Milvus Lite DB Locking
+
+**Error:**
+```
+Open /app/mmore_data/sk_rektor.db failed, the file has been opened by another program
+```
+
+**Root Cause:** Milvus Lite uses a single-process SQLite-based file. The running MMORE container holds a lock on it. A second process (e.g., `docker exec`) cannot open the same file.
+
+**Fix:** To inspect the Milvus schema, stop the container first, run a temporary container, then restart:
+```bash
+docker stop mmore-rag
+docker run --rm --entrypoint python \
+  --security-opt seccomp=unconfined --pids-limit -1 \
+  -e OPENBLAS_NUM_THREADS=1 \
+  -v ~/mmore_data:/app/mmore_data \
+  mmore-rag -c "from pymilvus import MilvusClient; ..."
+docker start mmore-rag
+```
+
+---
+
+## 6. RAG API Response Issues
+
+### `context` field returning `null`
+
+**Error:** The API returned:
+```json
+{ "input": "...", "context": null, "answer": "..." }
+```
+The answer was correct (meaning retrieval worked), but `context` was always `null`.
+
+**Root Cause:** The LangChain chain produces a dict with keys: `input`, `docs`, `context`, `answer`. The `make_output` function in `pipeline.py` validates through `MMOREOutput` which only keeps `{input, docs, answer}`, dropping the `context` string.
+
+Then `RAGOutput` in `run_rag.py` expects `context`, but since it was dropped, it defaults to `None`.
+
+**Fix** (in `src/mmore/rag/pipeline.py`):
+```python
+def make_output(x):
+    res_dict = MMOREOutput.model_validate(x).model_dump()
+    res_dict["answer"] = res_dict["answer"].split("<|im_start|>assistant\n")[-1]
+    # Preserve context string from the chain
+    if "context" in x:
+        res_dict["context"] = x["context"]
+    return res_dict
+```
+
+---
+
+## 7. Network & Firewall
+
+### Port 8000 not accessible from outside
+
+**Diagnosis:** From a local Windows machine:
+```powershell
+Test-NetConnection 152.118.31.54 -Port 8000
+# TcpTestSucceeded : False
+```
+
+**Root Cause:** The server firewall (`ufw` / `iptables`) did not have port 8000 open. The user had no `sudo` access to modify firewall rules.
+
+**Fix:** Requested the server admin to open port 8000/tcp:
+```bash
+sudo ufw allow 8000/tcp
+```
+
+After the admin opened the port:
+```powershell
+Test-NetConnection 152.118.31.54 -Port 8000
+# TcpTestSucceeded : True
+```
+
+---
+
+## 8. Final Working Configuration
+
+### Dockerfile
 ```dockerfile
 FROM python:3.12-slim
-
 WORKDIR /app
 
-# Disable progress bar to avoid thread creation limit crash
 ENV PIP_PROGRESS_BAR=off
 ENV PIP_NO_COLOR=1
 
@@ -48,13 +349,13 @@ RUN pip install --no-cache-dir -e ".[rag,cpu]" nltk tiktoken uvicorn fastapi "tr
 ENTRYPOINT ["python", "-m", "mmore"]
 ```
 
-## 3. Running the Container
+### Build
+```bash
+DOCKER_BUILDKIT=0 docker build --no-cache -t mmore-rag .
+```
+> `DOCKER_BUILDKIT=0` is required on Docker 20.10.8 to avoid BuildKit-related issues.
 
-Even though the image is built, running it still requires circumventing the default thread and security limits. 
-
-We mapped the configuration and database files to the container via volumes.
-
-**Run Command:**
+### Run
 ```bash
 docker run -d --name mmore-rag \
   --pids-limit -1 \
@@ -67,40 +368,94 @@ docker run -d --name mmore-rag \
   mmore-rag rag --config-file /app/configs/sk_rektor_rag_docker.yaml
 ```
 
-**Key Flags:**
-- `--pids-limit -1`: Disables the limit on maximum processes/threads, fixing `OpenBLAS` and `numpy` crashes.
-- `--security-opt seccomp=unconfined`: Lifts system call restrictions (required for high-performance processing inside Docker).
-- `--network host`: Binds the container directly to the host's networking stack. This ensures the RAG application can correctly communicate with the locally running Ollama instance (`http://localhost:11434/v1`) without complex bridge setups.
+### RAG Config (`sk_rektor_rag_docker.yaml`)
+```yaml
+rag:
+  llm:
+    llm_name: qwen2.5:latest
+    base_url: http://localhost:11434/v1
+    max_new_tokens: 1200
+    temperature: 0.7
+  retriever:
+    db:
+      uri: /app/mmore_data/sk_rektor.db
+      name: sk_rektor_db
+    collection_name: sk_rektor_docs
+    hybrid_search_weight: 0.5
+    k: 5
+    use_web: false
+    reranker_model_name: BAAI/bge-reranker-base
+  system_prompt: |
+    Kamu adalah asisten akademik Universitas Indonesia yang menjawab pertanyaan berdasarkan dokumen SK Rektor.
 
-## 4. RAG API Usage
+    ATURAN:
+    1. Jawab HANYA berdasarkan konteks yang diberikan.
+    2. Jika informasi tidak tersedia, katakan: "Maaf, informasi tersebut tidak tersedia dalam dokumen yang saya miliki."
+    3. Jika pertanyaan ambigu, minta klarifikasi.
+    4. Sebutkan sumber dokumen (nomor SK, pasal, ayat) jika tersedia.
+    5. Jawab dalam Bahasa Indonesia yang formal dan ringkas.
 
-Once deployed, the FastAPI server exposes a POST endpoint for querying the RAG pipeline.
+    Konteks:
+    {context}
+mode: api
+mode_args:
+  endpoint: '/rag'
+  port: 8000
+  host: '0.0.0.0'
+```
 
-### API Endpoint
-- **URL**: `http://<SERVER_IP>:8000/rag`
-- **Method**: `POST`
-- **Headers**:
-  - `Content-Type: application/json`
+---
 
-### Example Request Body
+## 9. API Usage
 
+### Endpoint
+| Property | Value |
+|----------|-------|
+| URL | `http://<SERVER_IP>:8000/rag` |
+| Method | `POST` |
+| Content-Type | `application/json` |
+
+### cURL Example
+```bash
+curl -X POST http://152.118.31.54:8000/rag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "input": "Siapa rektor UI?",
+      "collection_name": "sk_rektor_docs"
+    }
+  }'
+```
+
+### Postman
+- Method: POST
+- URL: `http://152.118.31.54:8000/rag`
+- Body → raw → JSON:
 ```json
 {
-  "input": "Siapa rektor UI?",
-  "collection_name": "sk_rektor_docs"
+  "input": {
+    "input": "Siapa rektor UI?",
+    "collection_name": "sk_rektor_docs"
+  }
 }
 ```
 
 ### Example Response
-
-The response successfully intercepts the underlying LLM output and the RAG document contexts:
-
 ```json
 {
   "input": "Siapa rektor UI?",
-  "context": "PERATURAN REKTOR UNIVERSITAS INDONESIA NOMOR 16 TAHUN 2025 ... Ditetapkan di Jakarta Pada tanggal 18 Juli 2025 REKTOR UNIVERSITAS INDONESIA, Prof. Dr. Ir. Heri Hermansyah, S.T., M.Eng., IPU.",
-  "answer": "Berdasarkan dokumen tersebut, Rektor Universitas Indonesia saat ini (yang menetapkan peraturan pada tahun 2025) adalah Prof. Dr. Ir. Heri Hermansyah, S.T., M.Eng., IPU."
+  "context": "PERATURAN REKTOR UNIVERSITAS INDONESIA NOMOR 16 TAHUN 2025 ...",
+  "answer": "Rektor Universitas Indonesia adalah Prof. Dr. Ir. Heri Hermansyah, S.T., M.Eng., IPU."
 }
 ```
 
-> **Note:** Streaming is not currently supported in this API architecture, the response is delivered synchronously after retrieval and generation are complete.
+### Viewing Container Logs
+```bash
+# Live logs
+docker logs -f mmore-rag
+
+# Last 50 lines
+docker logs --tail 50 mmore-rag
+```
+
+> **Note:** The API currently does not support streaming. Responses are returned synchronously after retrieval + generation completes.
