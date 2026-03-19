@@ -1,0 +1,12 @@
+indexer:
+  dense_model:
+    model_name: sentence-transformers/all-MiniLM-L6-v2
+    is_multimodal: false
+  sparse_model:
+    model_name: splade
+    is_multimodal: false
+  db:
+    uri: ./my_rag.db
+    name: my_rag_db
+collection_name: my_rag_docs
+documents_path: 'C:/Users/aryan/Documents/kuliah/skripsi/mmore/data_ingestion/outputs/postprocess/merged/results.jsonl'

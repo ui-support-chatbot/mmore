@@ -5,16 +5,35 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional, cast
 
 import torch
-from langchain_anthropic import ChatAnthropic
-from langchain_cohere import ChatCohere
-from langchain_core.language_models.chat_models import BaseChatModel
+try:
+    from langchain_anthropic import ChatAnthropic
+except ImportError:
+    ChatAnthropic = None
+
+try:
+    from langchain_cohere import ChatCohere
+except ImportError:
+    ChatCohere = None
 
 # HF Models
-from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
-from langchain_mistralai import ChatMistralAI
+try:
+    from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
+except ImportError:
+    ChatHuggingFace = None
+    HuggingFacePipeline = None
+
+try:
+    from langchain_mistralai import ChatMistralAI
+except ImportError:
+    ChatMistralAI = None
 
 # Proprietary Models
-from langchain_openai import ChatOpenAI
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
+
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from ..utils import load_config
 

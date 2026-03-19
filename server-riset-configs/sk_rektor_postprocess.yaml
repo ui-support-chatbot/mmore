@@ -1,0 +1,8 @@
+pp_modules:
+  - type: chunker
+    args:
+      chunking_strategy: sentence
+
+output:
+  output_path: /home/pengguna01/mmore_data/outputs/postprocess/results.jsonl
+  save_each_step: True

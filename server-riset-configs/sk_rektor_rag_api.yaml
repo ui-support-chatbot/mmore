@@ -1,0 +1,22 @@
+rag:
+  llm:
+    llm_name: qwen3.5:latest
+    base_url: http://localhost:11434/v1
+    max_new_tokens: 1200
+    temperature: 0.7
+  retriever:
+    db:
+      uri: /home/pengguna01/mmore_data/sk_rektor.db
+      name: sk_rektor_db
+    collection_name: sk_rektor_docs
+    hybrid_search_weight: 0.5
+    k: 5
+    use_web: false
+    reranker_model_name: BAAI/bge-reranker-base
+  system_prompt: "Gunakan konteks berikut untuk menjawab pertanyaan. Jika konteks tidak menjawab pertanyaan, katakan tidak tahu.\n\nKonteks:\n{context}"
+mode: api
+mode_args:
+  endpoint: '/rag'
+  port: 8000
+  host: '0.0.0.0'
+
