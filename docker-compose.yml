@@ -1,69 +1,102 @@
+# =============================================================================
+# MMORE Docker Compose — Docker 20.10.8 compatible
+# =============================================================================
+# Usage:
+#   Build:        DOCKER_BUILDKIT=0 docker compose build
+#   Ollama:       docker compose up -d ollama
+#   Pull model:   docker exec -it ollama ollama pull qwen3.5:latest
+#   Process:      docker compose --profile pipeline run --rm mmore-process
+#   Postprocess:  docker compose --profile pipeline run --rm mmore-postprocess
+#   Index:        docker compose --profile setup run --rm mmore-index
+#   RAG API:      docker compose up -d mmore-rag
+# =============================================================================
+
 version: '3.8'
 
 services:
-  # ── Ollama (LLM serving) ──
+
+  # ── Ollama (LLM serving on GPU 0) ─────────────────────────────────────────
   ollama:
     image: ollama/ollama
     container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
     privileged: true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["0"]    # GPU 0 for LLM
-              capabilities: [gpu]
+    network_mode: host
+    volumes:
+      - ollama_storage:/root/.ollama
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
     restart: unless-stopped
 
-  # ── MMORE RAG API ──
+  # ── 1. Process raw documents (run once) ───────────────────────────────────
+  mmore-process:
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: "all"
+    container_name: mmore-process
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./configs:/app/configs
+      - ./data_ingestion:/app/data_ingestion
+    command: ["python", "-m", "mmore", "process", "--config-file", "/app/configs/sk_rektor_process_docker.yaml"]
+    profiles: ["pipeline"]
+
+  # ── 2. Postprocess / chunk (run once, after process) ──────────────────────
+  mmore-postprocess:
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: "all"
+    container_name: mmore-postprocess
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./configs:/app/configs
+      - ./data_ingestion:/app/data_ingestion
+    command: >
+      python -m mmore postprocess
+        --config-file /app/configs/sk_rektor_postprocess_docker.yaml
+        --input-data /app/data_ingestion/outputs/process/results.jsonl
+    profiles: ["pipeline"]
+
+  # ── 3. Index into Milvus Lite (run once, after postprocess) ───────────────
+  mmore-index:
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: "rag"
+    container_name: mmore-index
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./configs:/app/configs
+      - ./data_ingestion:/app/data_ingestion
+    command: ["python", "-m", "mmore", "index", "--config-file", "/app/configs/sk_rektor_index_docker.yaml"]
+    profiles: ["setup"]
+
+  # ── 4. RAG API (runs forever, serves queries on port 8000) ────────────────
   mmore-rag:
     build:
       context: .
       args:
-        PLATFORM: gpu
+        INSTALL_EXTRAS: "rag"
     container_name: mmore-rag
-    ports:
-      - "8000:8000"
+    privileged: true
+    network_mode: host
+    security_opt:
+      - seccomp:unconfined
     volumes:
       - ./configs:/app/configs
-      - ./mmore_data:/app/mmore_data
+      - ./data_ingestion:/app/data_ingestion
     environment:
       - OPENAI_API_KEY=dummy
-      - CUDA_VISIBLE_DEVICES=1      # GPU 1 for MMORE (SPLADE, reranker)
+      - NVIDIA_VISIBLE_DEVICES=1
+      - CUDA_VISIBLE_DEVICES=0
     command: ["python", "-m", "mmore", "rag", "--config-file", "/app/configs/sk_rektor_rag_docker.yaml"]
-    privileged: true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["1"]    # GPU 1 for embedding/reranker
-              capabilities: [gpu]
     depends_on:
       - ollama
-    restart: unless-stopped
-
-  # ── MMORE Index API (optional — for uploading new docs) ──
-  mmore-index-api:
-    build:
-      context: .
-      args:
-        PLATFORM: gpu
-    container_name: mmore-index-api
-    ports:
-      - "8001:8001"
-    volumes:
-      - ./configs:/app/configs
-      - ./mmore_data:/app/mmore_data
-    command: ["python", "-m", "mmore", "index-api", "--config-file", "/app/configs/sk_rektor_index_docker.yaml", "--host", "0.0.0.0", "--port", "8001"]
-    depends_on:
-      - ollama
-    profiles: ["full"]    # Only starts with: docker compose --profile full up
     restart: unless-stopped
 
 volumes:
-  ollama_data:
+  ollama_storage:

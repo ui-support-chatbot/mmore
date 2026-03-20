@@ -4,5 +4,5 @@ pp_modules:
       chunking_strategy: sentence
 
 output:
-  output_path: C:/Users/aryan/Documents/kuliah/skripsi/mmore/outputs/postprocess/merged/results.jsonl
+  output_path: data_ingestion/outputs/postprocess/results.jsonl
   save_each_step: True

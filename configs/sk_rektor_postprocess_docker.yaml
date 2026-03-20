@@ -1,0 +1,9 @@
+# Postprocess config for Docker — paths relative to container
+pp_modules:
+  - type: chunker
+    args:
+      chunking_strategy: sentence
+
+output:
+  output_path: /app/data_ingestion/outputs/postprocess/results.jsonl
+  save_each_step: True

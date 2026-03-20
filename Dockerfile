@@ -1,52 +1,36 @@
-ARG PLATFORM
+# =============================================================================
+# MMORE Dockerfile — Docker 20.10.8 compatible
+# =============================================================================
+# Workarounds applied (see docs/private/DOCKER_DEPLOYMENT.md):
+#   1. python:3.12-slim base (nvidia/cuda APT hooks crash under old seccomp)
+#   2. pip instead of uv (uv's Tokio runtime panics under old seccomp)
+#   3. PIP_PROGRESS_BAR=off (pip's rich progress bar spawns threads, blocked)
+#   4. Build with: DOCKER_BUILDKIT=0 docker build --no-cache -t mmore-rag .
+#   5. Run  with: --security-opt seccomp=unconfined --pids-limit -1
+# =============================================================================
 
-FROM nvidia/cuda:12.2.2-base-ubuntu22.04 AS gpu
-ARG PLATFORM
-RUN echo "Using GPU image"
-
-FROM ubuntu:22.04 AS cpu
-ARG PLATFORM
-ARG UV_ARGUMENTS="--extra cpu"
-RUN echo "Using CPU-only image"
-
-FROM ${PLATFORM:-gpu} AS build
-ARG UV_ARGUMENTS
-
-ARG USER_UID=1000
-ARG USER_GID=1000
-
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      python3-venv python3-pip \
-      tzdata nano curl ffmpeg libsm6 libxext6 chromium-browser libnss3 libgconf-2-4 \
-      libxi6 libxrandr2 libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxrender1 \
-      libasound2 libatk1.0-0 libgtk-3-0 libreoffice libjpeg-dev libpango-1.0-0 \
-      libpangoft2-1.0-0 weasyprint && \
-    ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime && \
-    dpkg-reconfigure --frontend noninteractive tzdata && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Create a non-root user
-RUN groupadd --gid ${USER_GID} mmoreuser \
- && useradd --uid ${USER_UID} --gid ${USER_GID} -m mmoreuser
-
+FROM python:3.12-slim
 WORKDIR /app
-RUN chown -R mmoreuser:mmoreuser /app
 
-USER mmoreuser
+# ── Disable pip's threaded progress bar (crashes under Docker 20 seccomp) ──
+ENV PIP_PROGRESS_BAR=off
+ENV PIP_NO_COLOR=1
 
-RUN python3 -m venv .venv \
- && .venv/bin/pip install --no-cache-dir uv
+# ── Which extras to install: "rag" (lighter) or "all" (includes process) ──
+ARG INSTALL_EXTRAS="rag"
 
-COPY pyproject.toml poetry.lock* /app/
-COPY --chown=mmoreuser:mmoreuser . /app
+# ── Copy only what's needed for install ──
+COPY pyproject.toml /app/
+COPY src /app/src
 
-# Install MMORE + extra dependencies + bug fix reinstall
-RUN .venv/bin/uv pip install --no-cache ${UV_ARGUMENTS} -e . && \
-    .venv/bin/uv pip install --no-cache nltk tiktoken
+# ── 1. Install GPU PyTorch first (wheel bundles CUDA runtime, no nvidia/cuda base needed) ──
+RUN pip install --no-cache-dir \
+    torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
-ENV PATH="/app/.venv/bin:$PATH"
-ENV DASK_DISTRIBUTED__WORKER__DAEMON=False
+# ── 2. Install MMORE + missing runtime deps + pinned transformers ──
+RUN pip install --no-cache-dir \
+    -e ".[$INSTALL_EXTRAS]" \
+    nltk tiktoken uvicorn fastapi "transformers==4.48.0"
 
-# Default entrypoint for running mmore commands
+# ── Default entrypoint ──
 ENTRYPOINT ["python", "-m", "mmore"]

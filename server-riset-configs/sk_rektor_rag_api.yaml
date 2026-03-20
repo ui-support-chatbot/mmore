@@ -1,7 +1,7 @@
 rag:
   llm:
     llm_name: qwen3.5:latest
-    base_url: http://localhost:11434/v1
+    base_url: http://host.docker.internal:11434/v1
     max_new_tokens: 1200
     temperature: 0.7
   retriever:
