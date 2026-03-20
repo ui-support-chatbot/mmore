@@ -19,6 +19,13 @@ ENV PIP_NO_COLOR=1
 # ── Which extras to install: "rag" (lighter) or "all" (includes process) ──
 ARG INSTALL_EXTRAS="rag"
 
+# ── Install build tools (gcc/g++ needed by pandas, numpy, etc. when building from source) ──
+# NOTE: python:3.12-slim APT works fine under Docker 20 — the APT hook crash
+#       was only with nvidia/cuda base images.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 # ── Copy only what's needed for install ──
 COPY pyproject.toml /app/
 COPY src /app/src
