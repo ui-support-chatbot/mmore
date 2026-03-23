@@ -8,7 +8,7 @@ rag:
   retriever:
     db:
       uri: http://localhost:19530
-      name: sk_rektor_db
+      name: default
     collection_name: sk_rektor_docs
     hybrid_search_weight: 0.5
     k: 5

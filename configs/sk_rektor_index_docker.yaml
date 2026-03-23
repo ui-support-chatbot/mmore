@@ -7,6 +7,6 @@ indexer:
     is_multimodal: false
   db:
     uri: http://localhost:19530
-    name: sk_rektor_db
+    name: default
 collection_name: sk_rektor_docs
 documents_path: /app/data_ingestion/outputs/postprocess/results.jsonl
