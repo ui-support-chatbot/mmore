@@ -6,7 +6,7 @@ indexer:
     model_name: splade
     is_multimodal: false
   db:
-    uri: /app/data_ingestion/db/sk_rektor.db
+    uri: ./data_ingestion/db/sk_rektor.db
     name: sk_rektor_db
 collection_name: sk_rektor_docs
 documents_path: /app/data_ingestion/outputs/postprocess/results.jsonl

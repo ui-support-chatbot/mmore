@@ -2,14 +2,14 @@
 # MMORE Dockerfile — Docker 20.10.8 compatible
 # =============================================================================
 # Workarounds applied (see docs/private/DOCKER_DEPLOYMENT.md):
-#   1. python:3.12-slim base (nvidia/cuda APT hooks crash under old seccomp)
+#   1. python:3.11 base (nvidia/cuda APT hooks crash under old seccomp)
 #   2. pip instead of uv (uv's Tokio runtime panics under old seccomp)
 #   3. PIP_PROGRESS_BAR=off (pip's rich progress bar spawns threads, blocked)
 #   4. Build with: DOCKER_BUILDKIT=0 docker build --no-cache -t mmore-rag .
 #   5. Run  with: --security-opt seccomp=unconfined --pids-limit -1
 # =============================================================================
 
-FROM python:3.12-slim
+FROM python:3.11
 WORKDIR /app
 
 # ── Disable pip's threaded progress bar (crashes under Docker 20 seccomp) ──

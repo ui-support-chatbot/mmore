@@ -7,7 +7,7 @@ rag:
     temperature: 0.7
   retriever:
     db:
-      uri: /app/data_ingestion/db/sk_rektor.db
+      uri: ./data_ingestion/db/sk_rektor.db
       name: sk_rektor_db
     collection_name: sk_rektor_docs
     hybrid_search_weight: 0.5
