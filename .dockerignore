@@ -1,3 +1,8 @@
 .venv
 tests
 test_data
+data_ingestion
+configs
+mmore_db_data
+__pycache__
+*.pyc
