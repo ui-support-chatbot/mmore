@@ -6,3 +6,4 @@ configs
 mmore_db_data
 __pycache__
 *.pyc
+volumes/
