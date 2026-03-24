@@ -96,18 +96,22 @@ class HTMLProcessor(Processor):
             logger.error(f"Failed to open HTML file {file_path}: {e}")
             return self.create_sample([], [], {"file_path": file_path})
 
-        markdown = md(html, heading_style="ATX")
+        import trafilatura
+        # Use trafilatura to extract ONLY the main content (strips menus, footers, ads)
+        markdown = trafilatura.extract(html, include_images=True)
+        
+        # Fallback to markdownify if trafilatura fails to find main content
+        if not markdown:
+            from markdownify import markdownify as md
+            markdown = md(html, heading_style="ATX")
 
         if self.config.custom_config.get("extract_images", True):
             embedded_images = _extract_images_from_markdown(markdown)
-
+            markdown = re.sub(r"!\[.*?\]\(.*?\)", self.config.attachment_tag, markdown)
         else:
             embedded_images = []
-
-        # If extract_images is enabled, optionally replace image markdown with a placeholder
-        if self.config.custom_config.get("extract_images", True):
-            # Replace all image markdown with the placeholder
-            markdown = re.sub(r"!\[.*?\]\(.*?\)", self.config.attachment_tag, markdown)
+            # Remove image markdown completely to remove placeholders
+            markdown = re.sub(r"!\[.*?\]\(.*?\)", "", markdown)
 
         # Clean the markdown text
         cleaned_markdown = clean_text(markdown).strip()

@@ -6,7 +6,7 @@ dispatcher_config:
   use_fast_processors: true
   distributed: false
   dashboard_backend_url: null
-  extract_images: true
+  extract_images: false
   scheduler_file: null
   process_batch_sizes:
     - PDFProcessor: 4
