@@ -459,3 +459,76 @@ docker logs --tail 50 mmore-rag
 ```
 
 > **Note:** The API currently does not support streaming. Responses are returned synchronously after retrieval + generation completes.
+
+---
+
+## 10. Milvus Standalone Transition (Database Errors)
+
+### Problem: `milvus-lite` Crashing on Startup
+The `index` command silently crashed when initializing Milvus. The error was a silent `SIGKILL` or an unhandled C++ exception inside `milvus-lite`.
+**Root Cause:** The embedded `milvus-lite` engine uses an embedded SQLite instance and requires aggressive multithreading (`libgomp1`, `libatomic1`). Even with the dependencies installed, the strict `seccomp` profile of Docker 20.10.8 blocked internal syscalls of the engine, causing a panic/DNS resolution failure (`dns:///`).
+
+### Fix: Migrate to Milvus Standalone
+Instead of using the embedded `milvus-lite` engine inside the Python script, we spun up a full **Milvus Standalone** instance using the official `docker-compose.yml`.
+1. The compose file spins up 3 containers: `etcd`, `minio`, and `milvus`.
+2. The database files are stored locally in the `volumes/` directory on the host.
+3. In `configs/sk_rektor_index_docker.yaml` and `configs/sk_rektor_rag_docker.yaml`, the URI was changed from a local `.db` file to:
+   ```yaml
+   uri: http://localhost:19530
+   name: default
+   ```
+
+### Follow-up Error: `docker build` Permission Denied (can't stat 'volumes')
+Because Milvus runs as `root`, the `volumes/` directory it created was owned by root. Running `docker build .` caused Docker to try to read the entire `~/mmore` directory as the build context, failing on `volumes/`.
+**Fix:** Added `volumes/` to `.dockerignore`.
+
+---
+
+## 11. Docker Permissions & File Ownership Hell
+
+### Problem: `rm -rf` Permission Denied
+When attempting to clear old extracted data (`~/mmore/data_ingestion/outputs/*`), the user got `Permission denied`.
+**Root Cause:** The `mmore-all` Docker container ran as `root`, so all output JSONL files and extracted images produced on the mounted host volume were owned by `root`.
+
+### Failed Fix: Forcing `--user`
+Attempting to run the container as `--user "$(id -u):$(id -g)"` broke the entire pipeline:
+- `PermissionError: [Errno 13] Permission denied: './profiling_output'`
+- `KeyError: 'getpwuid(): uid not found: 1004'` (PyTorch tried to map the UI to `/etc/passwd`)
+- `PermissionError: [Errno 13] Permission denied: '/nltk_data'` (NLTK tried writing to root directories)
+- HuggingFace cache errors.
+
+**Actual Fix:** Since the MMORE Dockerfile installs dependencies globally as `root` inside the container, trying to run it as a non-root user via `--user` causes compounding errors. The best practice is to **run the container normally (without `--user`)**. To delete the root-owned files later, spin up a tiny alpine container to do the deletion:
+```bash
+docker run --rm -v ~/mmore/data_ingestion/outputs:/tmp_outputs alpine rm -rf /tmp_outputs/process
+```
+
+---
+
+## 12. Data Quality & Processor Enhancements
+
+### A. Removing HTML Boilerplate
+**Problem:** `HTMLProcessor` used `markdownify`, which indiscriminately kept navigation menus, sidebars, and footers (e.g., "Home, Tentang Kami, Hubungi"). This polluted the RAG context.
+**Fix:** Swapped `markdownify` for `trafilatura`. Trafilatura algorithmically targets the main body/article text of a webpage and completely strips away the boilerplate.
+
+### B. Removing Noisy Image Placeholders
+**Problem:** Extracted HTML and PDFs were injecting massive `<attachment>` tags and raw image URLs into the text, taking up valuable token limits.
+**Fix:** Set `extract_images: false` in `sk_rektor_process_docker.yaml`. This propagates natively down to Marker-PDF and Trafilatura, forcing them to drop inline images entirely.
+
+### C. Stripping `<think>` Tags from Qwen/DeepSeek
+**Problem:** Reasoning models like `qwen2.5:latest` output raw `<think>...</think>` tags containing their Chain-of-Thought process before the actual answer.
+**Fix:** Added a regex cleaner in `src/mmore/rag/pipeline.py` inside `make_output(x)` to surgically strip out any `<think>` blocks from the final response, guaranteeing clean API output to the user.
+
+---
+
+## 13. Future Roadmap & To-Do List
+
+- [ ] **Implement Pipeline Profiling & Timing Measurement**
+  - Add native timing capabilities (`time.time()` blocks or `langchain.debug = True`) to definitively measure the latency offset of Retrieval (search/reranker latency) vs Generation (LLM token streaming).
+- [ ] **Implement RAGAS Evaluation**
+  - Synthesize a golden Q&A dataset based on Universitas Indonesia facts (e.g., "Siapa rektor UI?").
+  - Run the `ragas` evaluation metrics (`context_precision`, `context_recall`, `faithfulness`, `answer_relevancy`) across different LLMs (Qwen 14B vs Gemma) and embedding setups to scientifically determine the highest performing approach for the thesis.
+- [ ] **LLM Evaluation: Standalone MMORE vs Built-from-Scratch vLLM**
+  - Compare the rigid MMORE LCEL chains against a custom-built, lightweight LangChain+vLLM architecture.
+  - Test if a custom architecture yields better performance due to explicit control over overlap metadata and native API Streaming responses.
+- [ ] **Stream Response Support**
+  - Rewrite `@app.post(endpoint)` in `run_rag.py` to utilize FastAPI's `StreamingResponse` for realtime token streaming on the dashboard, bypassing the static `.invoke()` method.
