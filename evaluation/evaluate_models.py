@@ -46,7 +46,7 @@ MODELS_TO_TEST = [
 ]
 
 # The local Ollama model that will ACT AS THE JUDGE to score the generating models.
-JUDGE_MODEL = "qwen3.5:9b"
+JUDGE_MODEL = "gemma3:4b"
 
 COLLECTION_NAME = "sk_rektor_docs"
 
@@ -92,8 +92,9 @@ def main():
     # Pre-pull the judge model
     pull_ollama_model(JUDGE_MODEL)
     
-    # Initialize the fully local evaluator LLM
-    judge_llm = ChatOllama(model=JUDGE_MODEL, base_url="http://localhost:11434")
+    # Initialize the fully local evaluator LLM with strict 0.0 temperature
+    # to prevent "overthinking" and force it to act strictly as a judge.
+    judge_llm = ChatOllama(model=JUDGE_MODEL, base_url="http://localhost:11434", temperature=0.0)
     
     # Ragas needs an embedding model to evaluate metrics
     judge_embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
@@ -161,6 +162,7 @@ def main():
                 
             end_time = time.time()
             latency = end_time - start_time
+            logger.info(f"  -> [{model_name}] Answered Q{i+1}/{len(golden_data)} in {latency:.2f}s")
 
             model_results["user_input"].append(question)
             model_results["response"].append(ans)
@@ -194,6 +196,13 @@ def main():
 
             # Extract numeric averages for final row
             df_res = evaluation_result.to_pandas()
+            
+            # SAVE THE DETAILED ANSWERS & INDIVIDUAL QUESTION SCORES
+            safe_model_name = model_name.replace(":", "_").replace(".", "_")
+            detailed_csv_path = os.path.join(os.path.dirname(__file__), f"details_{safe_model_name}.csv")
+            df_res.to_csv(detailed_csv_path, index=False)
+            logger.info(f"Saved ALL raw answers and specific metrics for {model_name} to {detailed_csv_path}")
+
             numeric_cols = df_res.select_dtypes(include='number').columns
             avg_scores = df_res[numeric_cols].mean().to_dict()
 
@@ -206,15 +215,19 @@ def main():
             }
             all_results.append(row_result)
             logger.info(f"Scores for {model_name}: {row_result}")
+            
+            # Incrementally save the summary CSV after EVERY model finishes safely
+            df_final = pd.DataFrame(all_results)
+            df_final.to_csv(OUTPUT_CSV, index=False)
+            logger.info(f"Incrementally updated {OUTPUT_CSV} safely.")
         
         except Exception as e:
             logger.error(f"RAGAS evaluation failed for {model_name}: {e}")
 
-    # 4. Save Final Aggregated CSV
+    # 4. Final summary print
     if all_results:
         df_final = pd.DataFrame(all_results)
-        df_final.to_csv(OUTPUT_CSV, index=False)
-        logger.info(f"Evaluation complete! All results saved to {OUTPUT_CSV}")
+        logger.info("Evaluation complete! All models are fully saved.")
         print("\n=== FINAL RESULTS ===")
         print(df_final.to_string(index=False))
     else:

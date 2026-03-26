@@ -17,7 +17,7 @@ docker run -it --name mmore-eval --rm \
   -v "$(pwd)":/app \
   -v ~/mmore_data:/app/mmore_data \
   -v ~/.cache/pip:/root/.cache/pip \
-  mmore-rag /bin/bash -c "
+  mmore-rag -c "
     export PIP_PROGRESS_BAR=off && \
     export PIP_NO_COLOR=1 && \
     echo '[1/2] Loading Ragas Dependencies (uses cache after first run)...' && \
