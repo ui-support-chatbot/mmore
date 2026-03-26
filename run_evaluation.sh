@@ -12,6 +12,7 @@ docker run -it --name mmore-eval --rm \
   --network host \
   --pids-limit -1 \
   --security-opt seccomp=unconfined \
+  --entrypoint /bin/bash \
   -w /app \
   -v "$(pwd)":/app \
   -v ~/mmore_data:/app/mmore_data \
