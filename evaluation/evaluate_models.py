@@ -32,14 +32,21 @@ OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "evaluation_results_full_lo
 
 # List of models to evaluate against
 MODELS_TO_TEST = [
-    "qwen2.5:0.5b",
-    "qwen2.5:1.5b",
-    "qwen2.5:3b",
-    "qwen2.5:7b"
+    "qwen3.5:0.8b",
+    "qwen3.5:2b",
+    "qwen3.5:4b",
+    "qwen3.5:9b",
+    "nemotron-3-nano",
+    "gemma3:4b",
+    "gemma3:1B",
+    "ministral-3:3b",
+    "ministral-3:8b",
+    "deepseek-r1:8b",
+    "llama3.2:3b"
 ]
 
 # The local Ollama model that will ACT AS THE JUDGE to score the generating models.
-JUDGE_MODEL = "qwen2.5:7b" 
+JUDGE_MODEL = "qwen3.5:9b"
 
 COLLECTION_NAME = "sk_rektor_docs"
 

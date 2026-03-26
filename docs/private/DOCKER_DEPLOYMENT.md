@@ -524,9 +524,22 @@ docker run --rm -v ~/mmore/data_ingestion/outputs:/tmp_outputs alpine rm -rf /tm
 
 - [ ] **Implement Pipeline Profiling & Timing Measurement**
   - Add native timing capabilities (`time.time()` blocks or `langchain.debug = True`) to definitively measure the latency offset of Retrieval (search/reranker latency) vs Generation (LLM token streaming).
-- [ ] **Implement RAGAS Evaluation**
-  - Synthesize a golden Q&A dataset based on Universitas Indonesia facts (e.g., "Siapa rektor UI?").
-  - Run the `ragas` evaluation metrics (`context_precision`, `context_recall`, `faithfulness`, `answer_relevancy`) across different LLMs (Qwen 14B vs Gemma) and embedding setups to scientifically determine the highest performing approach for the thesis.
+- [x] **Implement RAGAS Evaluation**
+  - Synthesized a golden Q&A dataset based on Universitas Indonesia facts.
+  - Ran the `ragas` evaluation metrics across different Qwen 2.5 models using a local `qwen2.5:7b` judge.
+  
+  **Initial Evaluation Results (Round 1):**
+  | Model | Latency (s) | Faithfulness | Answer Relevancy | Context Precision | Context Recall |
+  |---|---|---|---|---|---|
+  | qwen2.5:0.5b | 3.67 | 0.0000 | 0.5224 | 0.4000 | 0.4667 |
+  | qwen2.5:1.5b | 2.42 | 0.5278 | 0.6716 | 0.4000 | 0.4667 |
+  | qwen2.5:3b | 3.65 | 0.5952 | 0.4954 | 0.4000 | 0.4667 |
+  | qwen2.5:7b | 6.17 | 0.6595 | 0.3941 | 0.4000 | 0.4667 |
+
+  **Analysis & Next Steps:**
+  - **Retriever Bottleneck (Context Recall=0.46):** Context Precision and Recall are exactly identical across all models. This proves that the true bottleneck right now is the **Retrieval** phase (Milvus/Embeddings). The database is only pulling ~46% of the correct facts needed to answer the questions. The LLMs are currently starved for context.
+  - **Generator Faithfulness:** Faithfulness correlates perfectly with model size. The 0.5b model completely hallucinates when the context is missing, while the 7b model is the most faithful (0.65). 
+  - **Action Item:** The immediate next step is to open `sk_rektor_rag_docker.yaml` and increase the retriever `k` (top-k search results) from 5 to maybe 10 or 15. This will force Milvus to fetch more context chunks and push the Context Recall closer to 1.0!
 - [ ] **LLM Evaluation: Standalone MMORE vs Built-from-Scratch vLLM**
   - Compare the rigid MMORE LCEL chains against a custom-built, lightweight LangChain+vLLM architecture.
   - Test if a custom architecture yields better performance due to explicit control over overlap metadata and native API Streaming responses.
