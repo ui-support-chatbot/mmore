@@ -6,6 +6,9 @@ cd "$SCRIPT_DIR"
 
 echo "🚀 Starting MMORE Fully Local RAGAS Evaluation Container..."
 
+# Remove any existing container with the same name to prevent conflicts
+docker rm -f mmore-eval &> /dev/null
+
 # Spins up a temporary Python container bypassing server restrictions, 
 # mounts the codebase, installs requirements, and executes the evaluation.
 docker run -it --name mmore-eval --rm \
