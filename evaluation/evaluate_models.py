@@ -102,7 +102,11 @@ def main():
     all_results = []
 
     # 3. Load Base Configuration
-    rag_config = load_config(CONFIG_PATH, RAGConfig)
+    import yaml
+    from dacite import from_dict
+    with open(CONFIG_PATH, "r") as f:
+        raw_config = yaml.safe_load(f)
+    rag_config = from_dict(data_class=RAGConfig, data=raw_config["rag"])
 
     for model_name in MODELS_TO_TEST:
         logger.info(f"=== Starting Evaluation for {model_name} ===")
