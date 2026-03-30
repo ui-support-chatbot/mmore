@@ -41,7 +41,8 @@ MODELS_TO_TEST = [
 ]
 
 # The local Ollama model that will ACT AS THE JUDGE to score the generating models.
-JUDGE_MODEL = "gemma3:4b"
+# Reverting to Qwen 2.5 7B which has proven consistent for Ragas extractions.
+JUDGE_MODEL = "qwen2.5:7b" 
 
 COLLECTION_NAME = "sk_rektor_docs"
 

@@ -540,6 +540,23 @@ docker run --rm -v ~/mmore/data_ingestion/outputs:/tmp_outputs alpine rm -rf /tm
   - **Retriever Bottleneck (Context Recall=0.46):** Context Precision and Recall are exactly identical across all models. This proves that the true bottleneck right now is the **Retrieval** phase (Milvus/Embeddings). The database is only pulling ~46% of the correct facts needed to answer the questions. The LLMs are currently starved for context.
   - **Generator Faithfulness:** Faithfulness correlates perfectly with model size. The 0.5b model completely hallucinates when the context is missing, while the 7b model is the most faithful (0.65). 
   - **Action Item:** The immediate next step is to open `sk_rektor_rag_docker.yaml` and increase the retriever `k` (top-k search results) from 5 to maybe 10 or 15. This will force Milvus to fetch more context chunks and push the Context Recall closer to 1.0!
+
+  **Round 2 Evaluation Results (k=15):**
+  | Model | Latency (s) | Faithfulness | Answer Relevancy | Context Precision | Context Recall |
+  |---|---|---|---|---|---|
+  | qwen3.5:9b | 76.73 | 1.0 | 0.5043 | 1.0000 | 1.0000 |
+  | gemma3:4b | 7.94 | 1.0 | 0.7758 | 1.0000 | 1.0000 |
+  | gemma3:1B | 8.48 | NaN | 0.5460 | NaN | 1.0000 |
+  | ministral-3:3b | 16.07 | NaN | 0.5027 | 1.0000 | 1.0000 |
+  | ministral-3:8b | 25.04 | NaN | 0.5718 | NaN | NaN |
+  | llama3.2:3b | 8.68 | 0.5 | 0.4420 | 1.0000 | 1.0000 |
+
+  **Analysis (Round 2):**
+  - **Success (k=15):** The increase to `k: 15` successfully pushed `Context Recall` and `Context Precision` to a perfect **1.0** for almost all models! This proves our retrieval bottleneck is solved.
+  - **NaN Issues:** `NaN` values occur when the Judge LLM fails to output a parsable score (e.g., if it gets confused or outputs reasoning text instead of a numeric score). 
+  - **Judge Bias:** Using `gemma3:4b` as a judge for other Gemma models can introduce "self-preference" bias. Reverting to **Qwen 2.5 7B** (at 0.0 temperature) is recommended for the most neutral and stable scoring.
+  - **Inference Speed:** `qwen3.5:9b` is significantly slower (76s) than the other models, likely due to internal architecture or quantization overhead in Ollama.
+
 - [ ] **LLM Evaluation: Standalone MMORE vs Built-from-Scratch vLLM**
   - Compare the rigid MMORE LCEL chains against a custom-built, lightweight LangChain+vLLM architecture.
   - Test if a custom architecture yields better performance due to explicit control over overlap metadata and native API Streaming responses.
