@@ -52,6 +52,66 @@ A dummy `OPENAI_API_KEY` environment variable must be set (Ollama doesn't check 
 -e OPENAI_API_KEY=dummy
 ```
 
+
+## 1.1. Model Persistence & Volume Consolidation
+
+### **Problem: Model Fragmentation**
+Akibat banyaknya eksperimen (penggunaan MMORE, instalasi manual, dsb.), model AI tersebar di beberapa Docker volume seperti `ollama_data`, `ollama_storage`, dan `mmore_ollama_data`. 
+
+**Dampak Negatif:**
+* **Inefisiensi Ruang Disk:** Penggunaan storage di server `riset-01` menjadi boros karena redundansi file.
+* **Kebingungan Deployment:** Sulit menentukan volume mana yang berisi versi model terbaru saat akan menjalankan kontainer.
+
+---
+
+### **Diagnosis: Inspecting Volume Contents**
+Untuk memeriksa isi volume tanpa memerlukan akses `sudo` langsung ke direktori root Docker, kita menggunakan teknik **bridge container** (kontainer sementara menggunakan image Alpine yang ringan):
+
+```bash
+docker run --rm -v <nama_volume>:/data alpine ls -R /data/models/manifests
+```
+
+**Temuan Lapangan:**
+* **`ollama_storage`**: Memiliki manifest terlengkap (termasuk model terbaru seperti `qwen3.5:9b` dan `gemma3`).
+* **`ollama_data`**: Hanya berisi model versi lama.
+
+---
+
+### **Fix: The "Bridge Sync" Method**
+Konsolidasi model dilakukan ke satu volume utama (`ollama_storage`) menggunakan teknik *non-destructive copy*. Metode ini menggabungkan isi dua volume tanpa menghapus data yang sudah ada.
+
+**Eksekusi Perintah:**
+```bash
+# Sinkronisasi model dari volume lama ke volume utama
+docker run --rm \
+  -v ollama_data:/from \
+  -v ollama_storage:/to \
+  alpine sh -c "cp -rn /from/* /to/"
+```
+
+> [!TIP]
+> **Catatan Teknis:** Penggunaan flag `-n` (*no-clobber*) sangat krusial untuk memastikan file yang sudah ada di target tidak tertimpa atau rusak selama proses migrasi.
+
+---
+
+### **Finalized Volume Strategy**
+Kami menetapkan **`ollama_storage`** sebagai volume permanen tunggal. Pemilihan nama ini didasarkan pada pemisahan semantik yang jelas:
+* **Aplikasi:** Logika operasional Ollama.
+* **Storage:** Aset model AI (blob) yang berukuran besar (GigaBytes).
+
+#### **Updated Run Command (Production Ready)**
+Gunakan perintah berikut untuk menjalankan Ollama dengan konfigurasi volume yang sudah terkonsolidasi:
+
+```bash
+docker rm -f ollama
+docker run -d --name ollama \
+  --gpus all --privileged \
+  -v ollama_storage:/root/.ollama \
+  -p 11434:11434 \
+  --restart unless-stopped \
+  ollama/ollama
+```
+
 ---
 
 ## 2. MMORE Code Bug Fixes
