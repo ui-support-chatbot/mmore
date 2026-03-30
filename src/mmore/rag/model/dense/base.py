@@ -1,12 +1,32 @@
 from dataclasses import dataclass
 
-from langchain_aws import BedrockEmbeddings
-from langchain_cohere import CohereEmbeddings
+try:
+    from langchain_aws import BedrockEmbeddings
+except ImportError:
+    BedrockEmbeddings = None
+
+try:
+    from langchain_cohere import CohereEmbeddings
+except ImportError:
+    CohereEmbeddings = None
+
+try:
+    from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+except ImportError:
+    HuggingFaceEmbeddings = None
+
+try:
+    from langchain_mistralai import MistralAIEmbeddings
+except ImportError:
+    MistralAIEmbeddings = None
+
+try:
+    from langchain_openai import OpenAIEmbeddings
+except ImportError:
+    OpenAIEmbeddings = None
+
 from langchain_community.embeddings import FakeEmbeddings
 from langchain_core.embeddings import Embeddings
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from langchain_mistralai import MistralAIEmbeddings
-from langchain_openai import OpenAIEmbeddings
 
 from .multimodal import MultimodalEmbeddings
 

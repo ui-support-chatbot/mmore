@@ -1,0 +1,23 @@
+# Process config for Docker — paths relative to container
+data_path: /app/data_ingestion/inputs/
+google_drive_ids: []
+dispatcher_config:
+  output_path: /app/data_ingestion/outputs/process/
+  use_fast_processors: true
+  distributed: false
+  dashboard_backend_url: null
+  extract_images: false
+  scheduler_file: null
+  process_batch_sizes:
+    - PDFProcessor: 4
+  processor_config:
+    PDFProcessor:
+      - PDFTEXT_CPU_WORKERS: 2
+      - DETECTOR_BATCH_SIZE: 1
+      - DETECTOR_POSTPROCESSING_CPU_WORKERS: 2
+      - RECOGNITION_BATCH_SIZE: 1
+      - OCR_PARALLEL_WORKERS: 2
+      - TEXIFY_BATCH_SIZE: 1
+      - LAYOUT_BATCH_SIZE: 1
+      - ORDER_BATCH_SIZE: 1
+      - TABLE_REC_BATCH_SIZE: 1

@@ -1,17 +1,17 @@
 # RAG API Config for Docker deployment
 rag:
   llm:
-    llm_name: qwen2.5:latest
+    llm_name: qwen3.5:latest
     base_url: http://localhost:11434/v1
     max_new_tokens: 1200
-    temperature: 0.7
+    temperature: 0.3
   retriever:
     db:
-      uri: /app/mmore_data/sk_rektor.db
-      name: sk_rektor_db
+      uri: http://localhost:19530
+      name: default
     collection_name: sk_rektor_docs
     hybrid_search_weight: 0.5
-    k: 5
+    k: 15
     use_web: false
     reranker_model_name: BAAI/bge-reranker-base
   system_prompt: |

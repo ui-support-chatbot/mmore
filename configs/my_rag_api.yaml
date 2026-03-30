@@ -1,0 +1,19 @@
+rag:
+  llm:
+    llm_name: qwen  # Update this if your specific Ollama tag is different (e.g., qwen2.5:9b)
+    base_url: http://localhost:11434/v1
+    max_new_tokens: 1200
+  retriever:
+    db:
+      uri: ./my_rag.db
+      name: 'my_rag_db'
+    hybrid_search_weight: 0.5
+    k: 5
+    use_web: false
+    reranker_model_name: BAAI/bge-reranker-base
+  system_prompt: "Gunakan konteks berikut untuk menjawab pertanyaan. Jika tidak ada konteks yang menjawab, katakan tidak tahu.\n\nKonteks:\n{context}"
+mode: api
+mode_args:
+  endpoint: '/rag'
+  port: 8000
+  host: '0.0.0.0'

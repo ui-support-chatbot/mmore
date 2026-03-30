@@ -1,0 +1,12 @@
+indexer:
+  dense_model:
+    model_name: sentence-transformers/all-MiniLM-L6-v2
+    is_multimodal: false
+  sparse_model:
+    model_name: splade
+    is_multimodal: false
+  db:
+    uri: /home/pengguna01/mmore_data/sk_rektor.db
+    name: sk_rektor_db
+collection_name: sk_rektor_docs
+documents_path: /home/pengguna01/mmore_data/outputs/postprocess/results.jsonl
